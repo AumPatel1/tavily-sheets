@@ -25,11 +25,15 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+
 load_dotenv()
 
 # Initialize API keys from environment
 openai_api_key = os.getenv("OPENAI_API_KEY")
 gemini_api_key = os.getenv("GEMINI_API_KEY")
+print("DEBUG: OPENAI_API_KEY =", openai_api_key)
+print("DEBUG: TAVILY_API_KEY =", os.getenv("TAVILY_API_KEY"))
+print("DEBUG: GEMINI_API_KEY =", gemini_api_key)
 APP_URL = os.getenv("VITE_APP_URL")
 
 JWT_SECRET = os.getenv('JWT_SECRET')
@@ -43,7 +47,7 @@ app = FastAPI(
 # Configure CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[APP_URL],
+    allow_origins=["http://localhost:5173"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -143,16 +147,19 @@ class EnrichTableResponse(BaseModel):
     status: str
     error: Optional[str] = None
 
-
 @app.get("/api/verify-jwt")
-async def verify_jwt(jwt_token: str = Cookie(None)):  # Renamed to avoid conflicts
-    try:
-        decoded = jwt.decode(jwt_token, JWT_SECRET, algorithms=["HS256"])
-        return JSONResponse(content={"success": True, "data": decoded['apiKey']})
-    except JWTError:
-        raise HTTPException(status_code=401, detail="Unauthorized: Invalid token")
-    except Exception as e:
-        raise HTTPException(status_code=401, detail=f"Unauthorized: {str(e)}")
+async def verify_jwt(jwt_token: str = Cookie(None)):
+    # BYPASS for local development: always return success
+    return JSONResponse(content={"success": True, "data": "FAKE_API_KEY_FOR_DEV"})
+# @app.get("/api/verify-jwt")
+# async def verify_jwt(jwt_token: str = Cookie(None)):  # Renamed to avoid conflicts
+#     try:
+#         # decoded = jwt.decode(jwt_token, JWT_SECRET, algorithms=["HS256"])
+#         return JSONResponse(content={"success": True, "data": "FAKE_API_KEY"})
+#     # except JWTError:
+#     #     raise HTTPException(status_code=401, detail="Unauthorized: Invalid token")
+#     # except Exception as e:
+#     #     raise HTTPException(status_code=401, detail=f"Unauthorized: {str(e)}")
     
 @app.post("/api/enrich", response_model=EnrichmentResponse)
 async def enrich_data(
@@ -164,6 +171,9 @@ async def enrich_data(
     start_time = time.time()
     try:
         api_key = fastapi_request.headers.get("Authorization")
+        # BYPASS for local development: use a default API key if not provided
+        if not api_key:
+            api_key = "FAKE_API_KEY_FOR_DEV"
         # Get the appropriate provider
         llm_provider = get_llm_provider(provider, api_key)
         
@@ -231,7 +241,9 @@ async def enrich_batch(
     start_time = time.time()
     try:
         api_key = fastapi_request.headers.get("Authorization")
-
+        # BYPASS for local development: use a default API key if not provided
+        if not api_key:
+            api_key = "FAKE_API_KEY_FOR_DEV"
         # Get the appropriate provider
         llm_provider = get_llm_provider(provider, api_key)
         
@@ -331,6 +343,9 @@ async def enrich_table(
     start_time = time.time()
     try:
         api_key = fastapi_request.headers.get("Authorization")
+        # BYPASS for local development: use a default API key if not provided
+        if not api_key:
+            api_key = "FAKE_API_KEY_FOR_DEV"
         llm_provider = get_llm_provider(provider, api_key)
 
         # Prepare enrichment tasks for all non-empty cells
