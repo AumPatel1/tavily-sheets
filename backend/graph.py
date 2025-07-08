@@ -94,6 +94,7 @@ class EnrichmentContext:
     input_source_type: Optional[str] = None   # 'ENTITY', 'URL', or 'TEXT_FROM_COLUMN' (where the input comes from)
     input_data: Optional[str] = None          # The actual data to use (e.g., "plaid.com" or text from another cell)
     plan: Optional[dict] = None               # Output of the Planner node: structured plan for what to do next
+    custom_prompt: Optional[str] = None       # Custom prompt/instruction for AI agent
     
     # Existing/legacy fields for enrichment
     search_result: Optional[dict] = None      # Results from Tavily search or other sources
@@ -108,23 +109,81 @@ class EnrichmentPipeline:
     async def search_tavily(self, state: EnrichmentContext):
         """Run Tavily search in a separate thread"""
         try:
-            # Use a custom search_query from the plan if available, otherwise fall back to the default pattern
+            # DEBUG: Log all the state information
+            logger.info(f"DEBUG search_tavily - column_name: {state.column_name}")
+            logger.info(f"DEBUG search_tavily - target_value: {state.target_value}")
+            logger.info(f"DEBUG search_tavily - input_source_type: {state.input_source_type}")
+            logger.info(f"DEBUG search_tavily - input_data: {state.input_data}")
+            logger.info(f"DEBUG search_tavily - custom_prompt: {state.custom_prompt}")
+            logger.info(f"DEBUG search_tavily - plan: {state.plan}")
+            
+            # Use a custom search_query from the plan if available, otherwise fall back to improved query construction
             query = None
             if state.plan and isinstance(state.plan, dict):
                 query = state.plan.get("search_query")
             if not query:
-                query = f"{state.column_name} of {state.target_value}?"
-            logger.info(f"Searching Tavily with query: {query}")
+                # Get current year for time-sensitive searches
+                import datetime
+                current_year = datetime.datetime.now().year
+                
+                # Normalize company names for better search results
+                def normalize_company_name(company_name):
+                    """Normalize company names for better search results"""
+                    if not company_name:
+                        return company_name
+                    
+                    # Convert to lowercase for comparison
+                    name_lower = company_name.lower().strip()
+                    
+                    # Handle common variations
+                    if name_lower in ['linked in', 'linkedin inc', 'linkedin corp']:
+                        return 'LinkedIn'
+                    elif name_lower in ['amazon inc', 'amazon.com', 'amazon com']:
+                        return 'Amazon'
+                    elif name_lower in ['microsoft corp', 'microsoft inc', 'msft']:
+                        return 'Microsoft'
+                    elif name_lower in ['google inc', 'alphabet inc', 'alphabet']:
+                        return 'Google'
+                    elif name_lower in ['apple inc', 'apple computer']:
+                        return 'Apple'
+                    elif name_lower in ['meta', 'facebook inc', 'meta platforms']:
+                        return 'Meta'
+                    
+                    # Return original with proper capitalization
+                    return company_name.strip()
+                
+                # Improved fallback query construction using custom prompt and input data
+                if state.custom_prompt and state.input_data:
+                    # Use custom prompt with input data for AI agent queries
+                    normalized_company = normalize_company_name(state.input_data)
+                    query = f"{state.custom_prompt} {normalized_company} current {current_year}"
+                elif state.custom_prompt:
+                    # Use custom prompt with target value
+                    normalized_company = normalize_company_name(state.target_value)
+                    query = f"{state.custom_prompt} {normalized_company} current {current_year}"
+                else:
+                    # Default fallback with current year for time-sensitive information
+                    normalized_company = normalize_company_name(state.target_value)
+                    query = f"current {state.column_name} of {normalized_company} {current_year}"
+            logger.info(f"FINAL SEARCH QUERY: {query}")
+            print(f"🔍 FINAL SEARCH QUERY: {query}")
+            print(f"🎯 Query components - custom_prompt: {state.custom_prompt}, input_data: {state.input_data}, target_value: {state.target_value}")
             # Run the Tavily search in a thread to avoid blocking
             result = await asyncio.to_thread(
                 lambda: self.tavily.search(
-                    query=query, auto_parameters=True, search_depth="advanced", max_results = 5, include_raw_content=True
+                    query=query, 
+                    auto_parameters=True, 
+                    search_depth="advanced", 
+                    max_results=5, 
+                    include_raw_content=True,
+                    days=365  # Search within the last year for more recent information
                 )
             )
             print(result["auto_parameters"])
             logger.info(f"Tavily search result: {result}")
             # Return the search result to be added to the context
             return {"search_result": result}
+            l
         except Exception as e:
             logger.error(f"Error in search_tavily: {str(e)}")
             raise
@@ -147,22 +206,35 @@ class EnrichmentPipeline:
         content = "\n\n---\n\n".join(result_contents)
         print(f"Content: {content}")
         try:
+            # Get current year for time-sensitive extraction
+            import datetime
+            current_year = datetime.datetime.now().year
+            
             # Build the prompt for the LLM, instructing it to extract only the direct answer
             extraction_instructions = ""
             if state.plan and isinstance(state.plan, dict):
                 extraction_instructions = state.plan.get("extraction_instructions", "")
             prompt = f"""
-                    Extract the {state.column_name} of {state.target_value} from this search result:
+                    Extract the CURRENT {state.column_name} of {state.target_value} from this search result:
 
                     {content}
 
                     Rules:
-                    1. Provide ONLY the direct answer - no explanations
-                    2. Be concise
-                    3. If not found, respond \"Information not found\"
-                    4. No citations or references
+                    1. PRIORITIZE the most recent information (look for dates from {current_year} or late 2023)
+                    2. If there are multiple entries, choose the most recent one
+                    3. For leadership positions (CEO, President, etc.), always look for "current" or most recent information
+                    4. Provide ONLY the direct answer - no explanations
+                    5. Be concise
+                    6. If not found, respond \"Information not found\"
+                    7. No citations or references
+                    
+                    Example:
+                    Search result: "Amazon's CEO is Andy Jassy as of 2021. Previously, Jeff Bezos was CEO until July 2021."
+                    Direct Answer: Andy Jassy
+                    
                     {extraction_instructions}
-                    Direct Answer:
+                    
+                    Current {state.column_name} of {state.target_value}:
                     """
             logger.info(f"Extracting answer for {state.target_value}")
 
@@ -181,6 +253,16 @@ class EnrichmentPipeline:
         Planner node: Uses the LLM to analyze the user's request and input data, and produces a structured plan.
         The plan determines the next action (e.g., analyze a URL, search the web, analyze text, etc.).
         """
+        # Get custom prompt and context for better planning
+        custom_prompt = state.custom_prompt
+        context_info = ""
+        if state.context_values:
+            context_info = f"Additional context: {state.context_values}"
+        
+        # Get current year for time-sensitive searches
+        import datetime
+        current_year = datetime.datetime.now().year
+        
         # Compose a prompt for the LLM to analyze the user's intent and input
         prompt = f"""
         You are an AI research agent planner. Your job is to analyze the user's enrichment request and input data, and return a JSON plan for the next step.
@@ -188,11 +270,16 @@ class EnrichmentPipeline:
         User's column/question: {state.column_name}
         Input source type: {state.input_source_type}
         Input data: {state.input_data}
+        Custom prompt/instruction: {custom_prompt or "None"}
+        {context_info}
 
         Instructions:
         - If the input source type is 'URL', and the question is about analyzing or extracting from that URL, set action to 'analyze_url' and include 'source_url' and 'extraction_instructions'.
         - If the input source type is 'TEXT_FROM_COLUMN', and the question is about analyzing or extracting from that text, set action to 'analyze_text' and include 'source_text' and 'extraction_instructions'.
         - If the input source type is 'ENTITY' or the question is general, set action to 'search_web' and include 'search_query' and 'extraction_instructions'.
+        - When creating search_query, ALWAYS include "current {current_year}" or "latest" for time-sensitive information like CEO, leadership, current status, etc.
+        - For leadership/CEO queries, include both "current" and "{current_year}" in the search query.
+        - If custom prompt is provided, incorporate it into the search query and extraction instructions.
         - Always include a concise 'extraction_instructions' field that tells the next node what to extract or analyze.
         - Respond ONLY with a valid JSON object, no explanation.
 
@@ -205,8 +292,8 @@ class EnrichmentPipeline:
         or
         {{
             "action": "search_web",
-            "search_query": "CEO of Amazon",
-            "extraction_instructions": "Extract the name of the CEO."
+            "search_query": "current CEO of Amazon {current_year} latest",
+            "extraction_instructions": "Extract the name of the current CEO as of {current_year}."
         }}
         or
         {{
@@ -219,6 +306,7 @@ class EnrichmentPipeline:
         """
         try:
             # Use the LLM to generate the plan as a JSON string
+            #plan_json = await self.llm.generate(prompt)
             plan_json = await self.llm.generate(prompt)
             import json
             plan = json.loads(plan_json)
@@ -226,8 +314,9 @@ class EnrichmentPipeline:
             return {"plan": plan}
         except Exception as e:
             logger.error(f"Error in generate_plan: {str(e)}")
-            # Fallback: default to web search
-            return {"plan": {"action": "search_web", "search_query": state.column_name, "extraction_instructions": f"Extract the answer to: {state.column_name}"}}
+            # Fallback: default to web search with current year
+            fallback_query = f"current {state.column_name} of {state.target_value} {current_year}"
+            return {"plan": {"action": "search_web", "search_query": fallback_query, "extraction_instructions": f"Extract the current answer to: {state.column_name}"}}
 
     async def scrape_website(self, state: EnrichmentContext):
         """
@@ -345,7 +434,10 @@ async def enrich_cell_with_graph(
     target_value: str,
     context_values: Dict[str, str],
     tavily_client,
-    llm_provider: LLMProvider
+    llm_provider: LLMProvider,
+    input_source_type: Optional[str] = "ENTITY",
+    input_data: Optional[str] = None,
+    custom_prompt: Optional[str] = None
 ) -> Dict:
     """Helper function to enrich a single cell using langgraph."""
     try:
@@ -357,6 +449,9 @@ async def enrich_cell_with_graph(
             column_name=column_name,
             target_value=target_value,
             context_values=context_values,
+            input_source_type=input_source_type,
+            input_data=input_data or target_value,
+            custom_prompt=custom_prompt,
             search_result=None,
             answer=None
         )
@@ -367,7 +462,7 @@ async def enrich_cell_with_graph(
         return result #, result['urls']
     except Exception as e:
         logger.error(f"Error in enrich_cell_with_graph: {str(e)}")
-        return "Error during enrichment"
+        return {"answer": "Error during enrichment", "search_result": None}
 
 # Example usage block for running the enrichment pipeline directly
 if __name__ == "__main__":
@@ -388,7 +483,7 @@ if __name__ == "__main__":
     openai_client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
     # Initialize Gemini model (Google Generative AI)
     gemini_model = GenerativeModel(model_name="gemini-1.5-flash")
-
+    #gemini_model = GenerativeModel(api_key=os.getenv("GEMINI_API_KEY"))
     # Example: Create OpenAI provider and pipeline
     openai_provider = OpenAIProvider(openai_client)
     pipeline_openai = EnrichmentPipeline(tavily_client, openai_provider)

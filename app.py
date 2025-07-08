@@ -47,7 +47,7 @@ app = FastAPI(
 # Configure CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=["http://localhost:5173", "http://localhost:5174"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -75,6 +75,8 @@ def init_clients(tavily_api_key: str):
         
         # Gemini provider (optional)
         if gemini_api_key:
+            import google.generativeai as genai
+            genai.configure(api_key=gemini_api_key)
             gemini_model = GenerativeModel(model_name="gemini-1.5-flash")
             gemini_provider = GeminiProvider(gemini_model)
 
@@ -106,21 +108,30 @@ class EnrichmentRequest(BaseModel):
     column_name: str
     target_value: str
     context_values: Dict[str, str]
-    answer: str = None
-    search_result: str = None
+    answer: Optional[str] = None
+    search_result: Optional[str] = None
+    # Add AI agent configuration fields
+    input_source_type: Optional[str] = "ENTITY"
+    input_data: Optional[str] = None
+    custom_prompt: Optional[str] = None
 
+# Update BatchEnrichmentRequest to include AI agent configuration
 class BatchEnrichmentRequest(BaseModel):
     column_name: str
     rows: List[str]  # List of target values to enrich
     context_values: Dict[str, str]
-    answer: str = None
-    search_result: str = None
+    answer: Optional[str] = None
+    search_result: Optional[str] = None
+    # Add AI agent configuration fields
+    input_source_type: Optional[str] = "ENTITY"
+    input_data: Optional[str] = None
+    custom_prompt: Optional[str] = None
 
 class TableData(BaseModel):
     rows: List[str]  # List of target values to enrich
     context_values: Dict[str, str]
-    answer: str = None
-    search_result: str = None
+    answer: Optional[str] = None
+    search_result: Optional[str] = None
 
 class TableEnrichmentRequest(BaseModel):
     data: Dict[str, TableData]
@@ -165,7 +176,7 @@ async def verify_jwt(jwt_token: str = Cookie(None)):
 async def enrich_data(
     request: EnrichmentRequest,
     fastapi_request: Request,
-    provider: str = "openai" 
+    provider: str = "gemini" 
 ):
     """Enrich a single cell's data."""
     start_time = time.time()
@@ -188,7 +199,10 @@ async def enrich_data(
             target_value=request.target_value,
             context_values=request.context_values,
             tavily_client=tavily_client,
-            llm_provider=llm_provider
+            llm_provider=llm_provider,
+            input_source_type=request.input_source_type,
+            input_data=request.input_data,
+            custom_prompt=request.custom_prompt
         )
         enrich_time = time.time() - enrich_start_time
         
@@ -235,7 +249,7 @@ async def enrich_data(
 async def enrich_batch(
     request: BatchEnrichmentRequest,
     fastapi_request: Request,
-    provider: str = "openai" 
+    provider: str = "gemini" 
 ):
     """Enrich multiple rows in parallel."""
     start_time = time.time()
@@ -260,7 +274,10 @@ async def enrich_batch(
                     target_value=row,
                     context_values=request.context_values,
                     tavily_client=tavily_client,
-                    llm_provider=llm_provider
+                    llm_provider=llm_provider,
+                    input_source_type=request.input_source_type,
+                    input_data=request.input_data,
+                    custom_prompt=request.custom_prompt
                 )
                 tasks.append(task)
 
@@ -337,7 +354,7 @@ async def enrich_batch(
 async def enrich_table(
     request: TableEnrichmentRequest,
     fastapi_request: Request,
-    provider: str = "openai"
+    provider: str = "gemini"
 ):
     """Enrich the entire table (all columns) in parallel."""
     start_time = time.time()

@@ -187,70 +187,108 @@ const Spreadsheet: React.FC<SpreadsheetProps> = ({
       // Extract all target values from first column
       const targetValues = data.rows.map((row) => row[0].value);
 
-      // Prepare payload for each row
-      const rowsPayload = data.rows.map((row, rowIndex) => {
-        // Default: use entity from first column
-        let input_source_type = "ENTITY";
-        let input_data = row[0].value;
-        let custom_prompt = undefined;
-        if (colConfig.enrichmentType === "ai_agent") {
-          input_source_type = "TEXT_FROM_COLUMN";
-          if (
-            typeof colConfig.mappedColumnIndex === "number" &&
-            data.headers[colConfig.mappedColumnIndex]
-          ) {
+      // For AI agents, we need to process each row individually because each row has different input_data
+      if (colConfig.enrichmentType === "ai_agent") {
+        // Process each row individually for AI agents
+        const individualResults: Array<{enriched_value: string, sources: any[]}> = [];
+        
+        for (let rowIndex = 0; rowIndex < data.rows.length; rowIndex++) {
+          const row = data.rows[rowIndex];
+          if (!row[0].value?.trim()) {
+            individualResults.push({ enriched_value: "", sources: [] });
+            continue;
+          }
+          
+          // Get the input data for this specific row
+          let input_data = row[0].value; // default to target value
+          if (typeof colConfig.mappedColumnIndex === "number" && data.headers[colConfig.mappedColumnIndex]) {
             input_data = row[colConfig.mappedColumnIndex].value;
           }
-          custom_prompt = colConfig.customPrompt;
+          
+          console.log(`Processing row ${rowIndex}: target_value=${row[0].value}, input_data=${input_data}, custom_prompt=${colConfig.customPrompt}`);
+          
+          // Make individual request for this row
+          const response = await fetch(`${API_URL}/api/enrich`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: apiKey,
+            },
+            body: JSON.stringify({
+              column_name: colConfig.name,
+              target_value: row[0].value,
+              context_values: contextValues,
+              input_source_type: "TEXT_FROM_COLUMN",
+              input_data: input_data,
+              custom_prompt: colConfig.customPrompt
+            }),
+          });
+          
+          if (!response.ok) {
+            individualResults.push({ enriched_value: "Error during enrichment", sources: [] });
+          } else {
+            const result = await response.json();
+            individualResults.push({ enriched_value: result.enriched_value, sources: result.sources });
+          }
         }
-        return {
-          column_name: colConfig.name,
-          target_value: row[0].value,
-          context_values: contextValues,
-          input_source_type,
-          input_data,
-          custom_prompt,
-        };
-      });
-
-      // Make a single batch request
-      const response = await fetch(`${API_URL}/api/enrich/batch`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: apiKey,
-        },
-        body: JSON.stringify({
-          column_name: colConfig.name,
-          rows: data.rows.map(row => row[0].value),
-          context_values: contextValues
-        }),
-      });
-
-      if (!response.ok) {
-        setToast({
-          message: "Enrichment failed",
-          type: "error",
-          isShowing: true,
+        
+        // Update all cells with individual results
+        const enrichedRows = data.rows.map((row, rowIndex) => {
+          const newRow = [...row];
+          newRow[colIndex] = {
+            value: individualResults[rowIndex].enriched_value,
+            sources: individualResults[rowIndex].sources,
+            enriched: individualResults[rowIndex].enriched_value !== "",
+            loading: false,
+          };
+          return newRow;
         });
-        throw new Error("Batch enrichment failed");
+        
+        setData({ ...data, rows: enrichedRows });
+      } else {
+        // Use batch processing for simple entity-based enrichment
+        const response = await fetch(`${API_URL}/api/enrich/batch`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: apiKey,
+          },
+          body: JSON.stringify({
+            column_name: colConfig.name,
+            rows: data.rows.map(row => row[0].value),
+            context_values: contextValues,
+            input_source_type: "ENTITY",
+            input_data: null,
+            custom_prompt: null
+          }),
+        });
+
+        if (!response.ok) {
+          setToast({
+            message: "Enrichment failed",
+            type: "error",
+            isShowing: true,
+          });
+          throw new Error("Batch enrichment failed");
+        }
+
+        const result = await response.json();
+
+        // Update all cells at once with the enriched values
+        const enrichedRows = data.rows.map((row, rowIndex) => {
+          const newRow = [...row];
+          newRow[colIndex] = {
+            value: result.enriched_values[rowIndex],
+            sources: result.sources[rowIndex],
+            enriched: result.enriched_values[rowIndex] !== "",
+            loading: false,
+          };
+          return newRow;
+        });
+
+        setData({ ...data, rows: enrichedRows });
       }
 
-      const result = await response.json();
-
-      // Update all cells at once with the enriched values
-      const enrichedRows = data.rows.map((row, rowIndex) => {
-        const newRow = [...row];
-        newRow[colIndex] = {
-          value: result.enriched_values[rowIndex],
-          sources: result.sources[rowIndex],
-          enriched: result.enriched_values[rowIndex] !== "",
-          loading: false,
-        };
-        return newRow;
-      });
-
-      setData({ ...data, rows: enrichedRows });
       setToast({ message: "Cells enriched", type: "success", isShowing: true });
     } catch (error) {
       console.error("Error during enrichment:", error);
