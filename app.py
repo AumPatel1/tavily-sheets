@@ -31,9 +31,6 @@ load_dotenv()
 # Initialize API keys from environment
 openai_api_key = os.getenv("OPENAI_API_KEY")
 gemini_api_key = os.getenv("GEMINI_API_KEY")
-print("DEBUG: OPENAI_API_KEY =", openai_api_key)
-print("DEBUG: TAVILY_API_KEY =", os.getenv("TAVILY_API_KEY"))
-print("DEBUG: GEMINI_API_KEY =", gemini_api_key)
 APP_URL = os.getenv("VITE_APP_URL")
 
 JWT_SECRET = os.getenv('JWT_SECRET')
@@ -106,21 +103,27 @@ class EnrichmentRequest(BaseModel):
     column_name: str
     target_value: str
     context_values: Dict[str, str]
-    answer: str = None
-    search_result: str = None
+    answer: Optional[str] = None
+    search_result: Optional[str] = None
 
 class BatchEnrichmentRequest(BaseModel):
     column_name: str
     rows: List[str]  # List of target values to enrich
     context_values: Dict[str, str]
-    answer: str = None
-    search_result: str = None
+    input_source_type: Optional[str] = None
+    input_datas: Optional[List[str]] = None
+    custom_prompt: Optional[str] = None
+    answer: Optional[str] = None
+    search_result: Optional[str] = None
 
 class TableData(BaseModel):
     rows: List[str]  # List of target values to enrich
     context_values: Dict[str, str]
-    answer: str = None
-    search_result: str = None
+    input_source_type: Optional[str] = None
+    input_datas: Optional[List[str]] = None
+    custom_prompt: Optional[str] = None
+    answer: Optional[str] = None
+    search_result: Optional[str] = None
 
 class TableEnrichmentRequest(BaseModel):
     data: Dict[str, TableData]
@@ -149,18 +152,8 @@ class EnrichTableResponse(BaseModel):
 
 @app.get("/api/verify-jwt")
 async def verify_jwt(jwt_token: str = Cookie(None)):
-    # BYPASS for local development: always return success
     return JSONResponse(content={"success": True, "data": "FAKE_API_KEY_FOR_DEV"})
-# @app.get("/api/verify-jwt")
-# async def verify_jwt(jwt_token: str = Cookie(None)):  # Renamed to avoid conflicts
-#     try:
-#         # decoded = jwt.decode(jwt_token, JWT_SECRET, algorithms=["HS256"])
-#         return JSONResponse(content={"success": True, "data": "FAKE_API_KEY"})
-#     # except JWTError:
-#     #     raise HTTPException(status_code=401, detail="Unauthorized: Invalid token")
-#     # except Exception as e:
-#     #     raise HTTPException(status_code=401, detail=f"Unauthorized: {str(e)}")
-    
+
 @app.post("/api/enrich", response_model=EnrichmentResponse)
 async def enrich_data(
     request: EnrichmentRequest,
@@ -253,16 +246,22 @@ async def enrich_batch(
 
         # Process each row
         tasks = []
-        for row in request.rows:
+        non_empty_indices = []  # Track indices of non-empty rows
+        for row_idx, row in enumerate(request.rows):
             if row.strip():
+                input_data = request.input_datas[row_idx] if request.input_datas and len(request.input_datas) > row_idx else None
                 task = enrich_cell_with_graph(
                     column_name=request.column_name,
                     target_value=row,
                     context_values=request.context_values,
                     tavily_client=tavily_client,
-                    llm_provider=llm_provider
+                    llm_provider=llm_provider,
+                    input_source_type=request.input_source_type,
+                    input_data=input_data,
+                    custom_prompt=request.custom_prompt
                 )
                 tasks.append(task)
+                non_empty_indices.append(row_idx)
 
         # Measure the time for the enrichment operations
         enrich_start_time = time.time()
@@ -274,7 +273,7 @@ async def enrich_batch(
         all_sources = []
         processed_idx = 0
         
-        for row in request.rows:
+        for row_idx, row in enumerate(request.rows):
             if not row.strip():
                 final_values.append("")
                 all_sources.append([])
@@ -302,11 +301,6 @@ async def enrich_batch(
         logger.info(f"Batch enrichment completed in {enrich_time:.2f}s (total request: {total_time:.2f}s)")
         logger.info(f"Average time per row: {avg_time_per_row:.2f}s")
         
-        print(BatchEnrichmentResponse(
-            enriched_values=final_values,
-            status="success",
-            sources=all_sources
-        ))
         return BatchEnrichmentResponse(
             enriched_values=final_values,
             status="success",
@@ -354,12 +348,16 @@ async def enrich_table(
         for column_name, table_data in request.data.items():
             for row_idx, row_value in enumerate(table_data.rows):
                 if row_value.strip():
+                    input_data = table_data.input_datas[row_idx] if table_data.input_datas and len(table_data.input_datas) > row_idx else None
                     task = enrich_cell_with_graph(
                         column_name=column_name,
                         target_value=row_value,
                         context_values=table_data.context_values,
                         tavily_client=tavily_client,
-                        llm_provider=llm_provider
+                        llm_provider=llm_provider,
+                        input_source_type=table_data.input_source_type,
+                        input_data=input_data,
+                        custom_prompt=table_data.custom_prompt
                     )
                     tasks.append(task)
                     index_map.append((column_name, row_idx))

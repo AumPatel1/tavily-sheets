@@ -8,9 +8,7 @@ import os
 from abc import ABC, abstractmethod
 # Import dataclass to easily create classes for storing data with less boilerplate
 from dataclasses import dataclass
-#from dataclassses import dataclass
 # Import Dict type hint for type annotations of dictionaries
-#from typing import Dict ,Optional ,Any
 from typing import Dict, Optional, Any
 
 # Import load_dotenv to load environment variables from a .env file
@@ -27,8 +25,6 @@ from tavily import TavilyClient
 # Configure logging to show INFO level logs and above
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-#logging.basicCongfig(level=logging.INFO)
-#logger = logging.getLogger(_name_)
 # Load environment variables from .env file (e.g., API keys)
 load_dotenv()
 
@@ -38,11 +34,6 @@ class LLMProvider(ABC):
     async def generate(self, prompt: str) -> str:
         # Abstract method to be implemented by subclasses for generating text from a prompt
         pass
-
-#class LLMPROVIDER(ABC):
-#@abstractmethod
-#async def generate(self,prompt:str)->str:
-#pass
 
 # Implementation of LLMProvider for OpenAI's GPT models
 class OpenAIProvider(LLMProvider):
@@ -58,13 +49,6 @@ class OpenAIProvider(LLMProvider):
         # Return the generated message content, stripped of whitespace
         return response.choices[0].message.content.strip()
 
-        #class openairesonse(LLMprovider):
-        #def __init__(self,model):
-        #self.model=model
-        
-  
-
-
 # Implementation of LLMProvider for Google's Gemini model
 class GeminiProvider(LLMProvider):
     def __init__(self, model):
@@ -76,13 +60,6 @@ class GeminiProvider(LLMProvider):
         # Return the generated text, stripped of whitespace
         return response.text.strip()
 
-
-        #class Geminiresponse(LLMProvider):
-        #def __init__(self,model):
-        #self.model=model
-
-        #async def generate(self,prompt:str)->str:
-       # response = await asyncio.to_thread(lambda:self.model.generate_content(prompt))
 # Dataclass to hold all relevant information for a single enrichment operation
 @dataclass
 class EnrichmentContext:
@@ -94,6 +71,7 @@ class EnrichmentContext:
     input_source_type: Optional[str] = None   # 'ENTITY', 'URL', or 'TEXT_FROM_COLUMN' (where the input comes from)
     input_data: Optional[str] = None          # The actual data to use (e.g., "plaid.com" or text from another cell)
     plan: Optional[dict] = None               # Output of the Planner node: structured plan for what to do next
+    custom_prompt: Optional[str] = None       # Custom prompt for ai_agent enrichment
     
     # Existing/legacy fields for enrichment
     search_result: Optional[dict] = None      # Results from Tavily search or other sources
@@ -104,7 +82,7 @@ class EnrichmentPipeline:
     def __init__(self, tavily_client, llm_provider: LLMProvider):
         self.tavily = tavily_client      # TavilyClient instance
         self.llm = llm_provider          # LLMProvider instance (OpenAI or Gemini)
-#async def search_tavily(self,state:EnrichmentContext):
+
     async def search_tavily(self, state: EnrichmentContext):
         """Run Tavily search in a separate thread"""
         try:
@@ -181,11 +159,12 @@ class EnrichmentPipeline:
         Planner node: Uses the LLM to analyze the user's request and input data, and produces a structured plan.
         The plan determines the next action (e.g., analyze a URL, search the web, analyze text, etc.).
         """
+        effective_question = state.custom_prompt if state.custom_prompt else state.column_name
         # Compose a prompt for the LLM to analyze the user's intent and input
         prompt = f"""
         You are an AI research agent planner. Your job is to analyze the user's enrichment request and input data, and return a JSON plan for the next step.
 
-        User's column/question: {state.column_name}
+        User's column/question: {effective_question}
         Input source type: {state.input_source_type}
         Input data: {state.input_data}
 
@@ -345,7 +324,10 @@ async def enrich_cell_with_graph(
     target_value: str,
     context_values: Dict[str, str],
     tavily_client,
-    llm_provider: LLMProvider
+    llm_provider: LLMProvider,
+    input_source_type: Optional[str] = None,
+    input_data: Optional[str] = None,
+    custom_prompt: Optional[str] = None
 ) -> Dict:
     """Helper function to enrich a single cell using langgraph."""
     try:
@@ -357,6 +339,9 @@ async def enrich_cell_with_graph(
             column_name=column_name,
             target_value=target_value,
             context_values=context_values,
+            input_source_type=input_source_type,
+            input_data=input_data,
+            custom_prompt=custom_prompt,
             search_result=None,
             answer=None
         )
