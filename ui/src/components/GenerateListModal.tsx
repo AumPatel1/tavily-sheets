@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, Loader2, Sparkles, Info, AlertCircle } from "lucide-react";
+import { X, Loader2, Sparkles, Info, AlertCircle, Zap, CheckCircle } from "lucide-react";
 import { SpreadsheetData } from "../types";
 
 interface GenerateListModalProps {
@@ -27,12 +27,14 @@ const GenerateListModal: React.FC<GenerateListModalProps> = ({
   const [prompt, setPrompt] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [selectedExample, setSelectedExample] = useState<number | null>(null);
 
   // Reset state when modal opens/closes
   useEffect(() => {
     if (!isOpen) {
       setPrompt("");
       setError(null);
+      setSelectedExample(null);
     }
   }, [isOpen]);
 
@@ -100,7 +102,7 @@ const GenerateListModal: React.FC<GenerateListModalProps> = ({
 
       const itemCount = result.data.rows?.length || result.data.length || 0;
       setToast({
-        message: `Successfully generated ${itemCount} items!`,
+        message: `✨ Successfully generated ${itemCount} items!`,
         type: "success",
         isShowing: true,
       });
@@ -128,7 +130,23 @@ const GenerateListModal: React.FC<GenerateListModalProps> = ({
     }
   };
 
+  const handleExampleClick = (example: string, index: number) => {
+    setPrompt(example);
+    setSelectedExample(index);
+    setError(null);
+    // Reset selection after animation
+    setTimeout(() => setSelectedExample(null), 1000);
+  };
+
   const isPromptValid = prompt.trim().length > 0 && prompt.trim().length <= MAX_PROMPT_LENGTH;
+
+  const examples = [
+    "Top 10 SaaS companies in project management",
+    "Leading AI startups in 2024",
+    "Main competitors to Figma in design tools",
+    "Best productivity apps for remote teams",
+    "Top e-commerce platforms for small businesses"
+  ];
 
   return (
     <AnimatePresence>
@@ -141,7 +159,7 @@ const GenerateListModal: React.FC<GenerateListModalProps> = ({
           onClick={onClose}
         >
           <motion.div
-            className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl mx-4 overflow-hidden"
+            className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl mx-4 overflow-hidden border border-gray-100"
             initial={{ scale: 0.9, opacity: 0, y: 20 }}
             animate={{ scale: 1, opacity: 1, y: 0 }}
             exit={{ scale: 0.9, opacity: 0, y: 20 }}
@@ -149,13 +167,17 @@ const GenerateListModal: React.FC<GenerateListModalProps> = ({
             onClick={(e) => e.stopPropagation()}
           >
             {/* Header */}
-            <div className="flex items-center justify-between p-6 border-b border-gray-200 bg-gradient-to-r from-blue-50 to-indigo-50">
+            <div className="flex items-center justify-between p-6 border-b border-gray-200 bg-gradient-to-r from-blue-50 via-indigo-50 to-purple-50">
               <div className="flex items-center gap-3">
-                <div className="p-2 bg-blue-100 rounded-lg">
-                  <Sparkles className="w-5 h-5 text-blue-600" />
-                </div>
+                <motion.div 
+                  className="p-2 bg-gradient-to-r from-blue-500 to-indigo-600 rounded-xl text-white"
+                  animate={{ rotate: isLoading ? 360 : 0 }}
+                  transition={{ duration: 2, repeat: isLoading ? Infinity : 0, ease: "linear" }}
+                >
+                  <Sparkles className="w-5 h-5" />
+                </motion.div>
                 <div>
-                  <h2 className="text-xl font-semibold text-gray-900">
+                  <h2 className="text-xl font-bold text-gray-900">
                     Generate List with AI
                   </h2>
                   <p className="text-sm text-gray-600 mt-1">
@@ -175,7 +197,7 @@ const GenerateListModal: React.FC<GenerateListModalProps> = ({
             {/* Content */}
             <div className="p-6">
               <div className="mb-6">
-                <label className="block text-sm font-medium text-gray-700 mb-2">
+                <label className="block text-sm font-semibold text-gray-700 mb-2">
                   Prompt
                 </label>
                 <div className="relative">
@@ -196,7 +218,7 @@ const GenerateListModal: React.FC<GenerateListModalProps> = ({
                         Press Cmd/Ctrl + Enter to generate
                       </span>
                     </div>
-                    <span className={`text-xs ${
+                    <span className={`text-xs font-medium ${
                       prompt.length > MAX_PROMPT_LENGTH * 0.9 
                         ? 'text-orange-500' 
                         : 'text-gray-400'
@@ -220,7 +242,7 @@ const GenerateListModal: React.FC<GenerateListModalProps> = ({
 
               <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-xl p-4 mb-6">
                 <h3 className="text-sm font-semibold text-blue-900 mb-3 flex items-center gap-2">
-                  <Sparkles className="w-4 h-4" />
+                  <Zap className="w-4 h-4" />
                   What happens next?
                 </h3>
                 <ul className="text-sm text-blue-800 space-y-2">
@@ -241,29 +263,42 @@ const GenerateListModal: React.FC<GenerateListModalProps> = ({
 
               {/* Example Prompts */}
               <div className="bg-gray-50 rounded-xl p-4">
-                <h4 className="text-sm font-medium text-gray-700 mb-3">Example Prompts:</h4>
+                <h4 className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
+                  <Sparkles className="w-4 h-4 text-gray-500" />
+                  Example Prompts:
+                </h4>
                 <div className="grid grid-cols-1 gap-2">
-                  {[
-                    "Top 10 SaaS companies in project management",
-                    "Leading AI startups in 2024",
-                    "Main competitors to Figma in design tools",
-                    "Best productivity apps for remote teams"
-                  ].map((example, index) => (
-                    <button
+                  {examples.map((example, index) => (
+                    <motion.button
                       key={index}
-                      onClick={() => setPrompt(example)}
+                      onClick={() => handleExampleClick(example, index)}
                       disabled={isLoading}
-                      className="text-left p-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg transition-colors disabled:opacity-50"
+                      className={`text-left p-3 text-sm text-gray-600 hover:bg-gray-100 rounded-lg transition-all duration-200 disabled:opacity-50 ${
+                        selectedExample === index ? 'bg-green-100 border border-green-300' : ''
+                      }`}
+                      whileHover={{ scale: 1.02 }}
+                      whileTap={{ scale: 0.98 }}
                     >
-                      "{example}"
-                    </button>
+                      <div className="flex items-center justify-between">
+                        <span>"{example}"</span>
+                        {selectedExample === index && (
+                          <motion.div
+                            initial={{ scale: 0 }}
+                            animate={{ scale: 1 }}
+                            className="text-green-600"
+                          >
+                            <CheckCircle className="w-4 h-4" />
+                          </motion.div>
+                        )}
+                      </div>
+                    </motion.button>
                   ))}
                 </div>
               </div>
             </div>
 
             {/* Footer */}
-            <div className="flex items-center justify-end gap-3 p-6 border-t border-gray-200 bg-gray-50">
+            <div className="flex items-center justify-end gap-3 p-6 border-t border-gray-200 bg-gradient-to-r from-gray-50 to-gray-100">
               <button
                 onClick={onClose}
                 className="px-4 py-2.5 text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors font-medium"
@@ -271,10 +306,12 @@ const GenerateListModal: React.FC<GenerateListModalProps> = ({
               >
                 Cancel
               </button>
-              <button
+              <motion.button
                 onClick={handleGenerate}
                 disabled={isLoading || !isPromptValid}
                 className="px-6 py-2.5 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-lg hover:from-blue-700 hover:to-indigo-700 disabled:from-gray-400 disabled:to-gray-400 disabled:cursor-not-allowed transition-all font-medium flex items-center gap-2 shadow-sm"
+                whileHover={{ scale: isPromptValid ? 1.02 : 1 }}
+                whileTap={{ scale: isPromptValid ? 0.98 : 1 }}
               >
                 {isLoading ? (
                   <>
@@ -287,7 +324,7 @@ const GenerateListModal: React.FC<GenerateListModalProps> = ({
                     Generate List
                   </>
                 )}
-              </button>
+              </motion.button>
             </div>
           </motion.div>
         </motion.div>
