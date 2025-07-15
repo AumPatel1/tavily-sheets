@@ -1,6 +1,6 @@
-import React, { useState } from "react";
-import { motion } from "framer-motion";
-import { X, Loader2 } from "lucide-react";
+import React, { useState, useEffect } from "react";
+import { motion, AnimatePresence } from "framer-motion";
+import { X, Loader2, Sparkles, Info, AlertCircle } from "lucide-react";
 import { SpreadsheetData } from "../types";
 
 interface GenerateListModalProps {
@@ -14,6 +14,8 @@ interface GenerateListModalProps {
 
 const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
 
+const MAX_PROMPT_LENGTH = 500;
+
 const GenerateListModal: React.FC<GenerateListModalProps> = ({
   isOpen,
   onClose,
@@ -24,27 +26,29 @@ const GenerateListModal: React.FC<GenerateListModalProps> = ({
 }) => {
   const [prompt, setPrompt] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Reset state when modal opens/closes
+  useEffect(() => {
+    if (!isOpen) {
+      setPrompt("");
+      setError(null);
+    }
+  }, [isOpen]);
 
   const handleGenerate = async () => {
     if (!prompt.trim()) {
-      setToast({
-        message: "Please enter a prompt",
-        type: "error",
-        isShowing: true,
-      });
+      setError("Please enter a prompt");
       return;
     }
 
     if (!checkApiKey()) {
-      setToast({
-        message: "Please set a valid API Key",
-        type: "error",
-        isShowing: true,
-      });
+      setError("Please set a valid API Key");
       return;
     }
 
     setIsLoading(true);
+    setError(null);
 
     try {
       const response = await fetch(`${API_URL}/api/generate-list`, {
@@ -57,13 +61,14 @@ const GenerateListModal: React.FC<GenerateListModalProps> = ({
       });
 
       if (!response.ok) {
-        throw new Error("Failed to generate list");
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.detail || `HTTP ${response.status}: ${response.statusText}`);
       }
 
       const result = await response.json();
       
       if (!result.data) {
-        throw new Error("Invalid response format");
+        throw new Error("Invalid response format from server");
       }
 
       // Handle new backend response structure
@@ -90,28 +95,19 @@ const GenerateListModal: React.FC<GenerateListModalProps> = ({
         };
         onGenerate(newData);
       } else {
-        setToast({
-          message: "Invalid response from backend.",
-          type: "error",
-          isShowing: true,
-        });
-        onClose();
-        return;
+        throw new Error("Unexpected response format from server");
       }
 
+      const itemCount = result.data.rows?.length || result.data.length || 0;
       setToast({
-        message: `Generated ${result.data.length} items successfully`,
+        message: `Successfully generated ${itemCount} items!`,
         type: "success",
         isShowing: true,
       });
       onClose();
     } catch (error) {
       console.error("Error generating list:", error);
-      setToast({
-        message: "Failed to generate list. Please try again.",
-        type: "error",
-        isShowing: true,
-      });
+      setError(error instanceof Error ? error.message : "Failed to generate list. Please try again.");
     } finally {
       setIsLoading(false);
     }
@@ -119,101 +115,184 @@ const GenerateListModal: React.FC<GenerateListModalProps> = ({
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+      e.preventDefault();
       handleGenerate();
     }
   };
 
-  if (!isOpen) return null;
+  const handlePromptChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const value = e.target.value;
+    if (value.length <= MAX_PROMPT_LENGTH) {
+      setPrompt(value);
+      setError(null);
+    }
+  };
+
+  const isPromptValid = prompt.trim().length > 0 && prompt.trim().length <= MAX_PROMPT_LENGTH;
 
   return (
-    <motion.div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50"
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
-    >
-      <motion.div
-        className="bg-white rounded-xl shadow-2xl w-full max-w-2xl mx-4 overflow-hidden"
-        initial={{ scale: 0.9, opacity: 0 }}
-        animate={{ scale: 1, opacity: 1 }}
-        exit={{ scale: 0.9, opacity: 0 }}
-        transition={{ type: "spring", damping: 25, stiffness: 300 }}
-      >
-        {/* Header */}
-        <div className="flex items-center justify-between p-6 border-b border-gray-200">
-          <div>
-            <h2 className="text-xl font-semibold text-gray-900">
-              Generate List with AI
-            </h2>
-            <p className="text-sm text-gray-600 mt-1">
-              Describe what kind of list you want to generate
-            </p>
-          </div>
-          <button
-            onClick={onClose}
-            className="text-gray-400 hover:text-gray-600 transition-colors p-2 rounded-full hover:bg-gray-100"
+    <AnimatePresence>
+      {isOpen && (
+        <motion.div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          onClick={onClose}
+        >
+          <motion.div
+            className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl mx-4 overflow-hidden"
+            initial={{ scale: 0.9, opacity: 0, y: 20 }}
+            animate={{ scale: 1, opacity: 1, y: 0 }}
+            exit={{ scale: 0.9, opacity: 0, y: 20 }}
+            transition={{ type: "spring", damping: 25, stiffness: 300 }}
+            onClick={(e) => e.stopPropagation()}
           >
-            <X size={20} />
-          </button>
-        </div>
+            {/* Header */}
+            <div className="flex items-center justify-between p-6 border-b border-gray-200 bg-gradient-to-r from-blue-50 to-indigo-50">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-blue-100 rounded-lg">
+                  <Sparkles className="w-5 h-5 text-blue-600" />
+                </div>
+                <div>
+                  <h2 className="text-xl font-semibold text-gray-900">
+                    Generate List with AI
+                  </h2>
+                  <p className="text-sm text-gray-600 mt-1">
+                    Describe what kind of list you want to generate
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={onClose}
+                className="text-gray-400 hover:text-gray-600 transition-colors p-2 rounded-full hover:bg-gray-100"
+                disabled={isLoading}
+              >
+                <X size={20} />
+              </button>
+            </div>
 
-        {/* Content */}
-        <div className="p-6">
-          <div className="mb-4">
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Prompt
-            </label>
-            <textarea
-              value={prompt}
-              onChange={(e) => setPrompt(e.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder="e.g., Who are the main competitors to Figma? List the top 10 SaaS companies in the project management space. What are the leading AI startups in 2024?"
-              className="w-full h-32 p-3 border border-gray-300 rounded-lg resize-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-              disabled={isLoading}
-            />
-            <p className="text-xs text-gray-500 mt-1">
-              Press Cmd/Ctrl + Enter to generate
-            </p>
-          </div>
+            {/* Content */}
+            <div className="p-6">
+              <div className="mb-6">
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Prompt
+                </label>
+                <div className="relative">
+                  <textarea
+                    value={prompt}
+                    onChange={handlePromptChange}
+                    onKeyDown={handleKeyDown}
+                    placeholder="e.g., Who are the main competitors to Figma? List the top 10 SaaS companies in the project management space. What are the leading AI startups in 2024?"
+                    className={`w-full h-32 p-4 border rounded-xl resize-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all ${
+                      error ? 'border-red-300' : 'border-gray-300'
+                    }`}
+                    disabled={isLoading}
+                  />
+                  <div className="flex justify-between items-center mt-2">
+                    <div className="flex items-center gap-2">
+                      <Info className="w-4 h-4 text-gray-400" />
+                      <span className="text-xs text-gray-500">
+                        Press Cmd/Ctrl + Enter to generate
+                      </span>
+                    </div>
+                    <span className={`text-xs ${
+                      prompt.length > MAX_PROMPT_LENGTH * 0.9 
+                        ? 'text-orange-500' 
+                        : 'text-gray-400'
+                    }`}>
+                      {prompt.length}/{MAX_PROMPT_LENGTH}
+                    </span>
+                  </div>
+                </div>
+                
+                {error && (
+                  <motion.div
+                    initial={{ opacity: 0, y: -10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="flex items-center gap-2 mt-2 p-3 bg-red-50 border border-red-200 rounded-lg"
+                  >
+                    <AlertCircle className="w-4 h-4 text-red-500 flex-shrink-0" />
+                    <span className="text-sm text-red-700">{error}</span>
+                  </motion.div>
+                )}
+              </div>
 
-          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
-            <h3 className="text-sm font-medium text-blue-900 mb-2">
-              What happens next?
-            </h3>
-            <ul className="text-sm text-blue-800 space-y-1">
-              <li>• AI will generate a list based on your prompt</li>
-              <li>• The list will be populated in the first column</li>
-              <li>• You can then use "Enrich" features to add more data</li>
-            </ul>
-          </div>
-        </div>
+              <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-xl p-4 mb-6">
+                <h3 className="text-sm font-semibold text-blue-900 mb-3 flex items-center gap-2">
+                  <Sparkles className="w-4 h-4" />
+                  What happens next?
+                </h3>
+                <ul className="text-sm text-blue-800 space-y-2">
+                  <li className="flex items-start gap-2">
+                    <span className="w-1.5 h-1.5 bg-blue-400 rounded-full mt-2 flex-shrink-0"></span>
+                    <span>AI will analyze your prompt and generate a relevant list</span>
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <span className="w-1.5 h-1.5 bg-blue-400 rounded-full mt-2 flex-shrink-0"></span>
+                    <span>The list will be populated in your spreadsheet with multiple columns</span>
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <span className="w-1.5 h-1.5 bg-blue-400 rounded-full mt-2 flex-shrink-0"></span>
+                    <span>You can then use "Enrich" features to add more detailed data</span>
+                  </li>
+                </ul>
+              </div>
 
-        {/* Footer */}
-        <div className="flex items-center justify-end gap-3 p-6 border-t border-gray-200 bg-gray-50">
-          <button
-            onClick={onClose}
-            className="px-4 py-2 text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
-            disabled={isLoading}
-          >
-            Cancel
-          </button>
-          <button
-            onClick={handleGenerate}
-            disabled={isLoading || !prompt.trim()}
-            className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
-          >
-            {isLoading ? (
-              <>
-                <Loader2 size={16} className="animate-spin" />
-                Generating...
-              </>
-            ) : (
-              "Generate List"
-            )}
-          </button>
-        </div>
-      </motion.div>
-    </motion.div>
+              {/* Example Prompts */}
+              <div className="bg-gray-50 rounded-xl p-4">
+                <h4 className="text-sm font-medium text-gray-700 mb-3">Example Prompts:</h4>
+                <div className="grid grid-cols-1 gap-2">
+                  {[
+                    "Top 10 SaaS companies in project management",
+                    "Leading AI startups in 2024",
+                    "Main competitors to Figma in design tools",
+                    "Best productivity apps for remote teams"
+                  ].map((example, index) => (
+                    <button
+                      key={index}
+                      onClick={() => setPrompt(example)}
+                      disabled={isLoading}
+                      className="text-left p-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg transition-colors disabled:opacity-50"
+                    >
+                      "{example}"
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className="flex items-center justify-end gap-3 p-6 border-t border-gray-200 bg-gray-50">
+              <button
+                onClick={onClose}
+                className="px-4 py-2.5 text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors font-medium"
+                disabled={isLoading}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleGenerate}
+                disabled={isLoading || !isPromptValid}
+                className="px-6 py-2.5 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-lg hover:from-blue-700 hover:to-indigo-700 disabled:from-gray-400 disabled:to-gray-400 disabled:cursor-not-allowed transition-all font-medium flex items-center gap-2 shadow-sm"
+              >
+                {isLoading ? (
+                  <>
+                    <Loader2 size={16} className="animate-spin" />
+                    Generating...
+                  </>
+                ) : (
+                  <>
+                    <Sparkles size={16} />
+                    Generate List
+                  </>
+                )}
+              </button>
+            </div>
+          </motion.div>
+        </motion.div>
+      )}
+    </AnimatePresence>
   );
 };
 
